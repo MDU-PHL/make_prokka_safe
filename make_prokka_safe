@@ -1,0 +1,112 @@
+#!/usr/bin/env python
+
+import sys
+import os
+import click
+import re
+
+class Isolate:
+	'''A class to store isolate information'''
+	def __init__(self, id, location ):
+		self.id = id
+		self.reads = {}
+		self.path = location
+
+	def add_read(self, read ):
+		'''add a read set to the object'''
+		if ( re.search( "R1", read ) ):
+			self.reads['R1'] = os.path.join( self.path, read )
+		else:
+			self.reads['R2'] = os.path.join( self.path, read )
+	
+	def add_label( self, label ):
+		'''a function to relabel the reads'''
+		self.label = label
+
+	def make_symlink( self ):
+		'''A function to create the sym links'''
+		self.read_link = {}
+		self.read_link['R1'] = os.path.join( self.path, self.label + "_R1.fastq.gz" )
+		self.read_link['R2'] = os.path.join( self.path, self.label + "_R2.fastq.gz" )
+		os.symlink( self.reads['R1'], self.read_link['R1'] )
+		os.symlink( self.reads['R2'], self.read_link['R2'] )
+	
+	def print_nullarbor( self ):
+		'''A function to print the nullarbor input string'''
+		return( "{}\t{}\t{}\n".format( self.label, self.read_link['R1'], self.read_link['R2'] ) )
+
+class Isolate_Collection:
+	'''A class to store isolate objects'''
+	def __init__(self):
+		self.isolates = {}
+
+	def add_isolate(self, id, path):
+		'''A function to create a new isolate object'''
+		self.isolates[id] = Isolate( id, path )
+	
+	def add_read(self, id, read):
+		'''A function to call the add.reads function of class Isolate'''
+		self.isolates[id].add_read( read )
+	
+	def in_collection(self, id ):
+		'''A function to query the collection for a specific id'''
+		return ( id in self.isolates.keys() )
+
+	def print_collection(self):
+		'''A function to print all the isolates'''
+		for isolate in self.isolates.keys():
+			print( "Isolate: {}".format(isolate) )
+		print( "###" )
+		print("Total number of isolates: {}".format( len( self.isolates.keys() ) ) )
+
+	def relabel_isolates( self, prefix ):
+		'''A function to relabel the isolates to meet prokka standards.'''
+		count = 1
+		out_nullarbor = ""
+		for k in sorted( self.isolates.iterkeys() ):
+			new_label = prefix + "-" + "{0:05d}".format( count ) 
+			self.isolates[k].add_label( new_label )
+			self.isolates[k].make_symlink()
+			out_nullarbor = out_nullarbor + self.isolates[k].print_nullarbor()
+			count = count + 1
+		fout = open( "input.tab", "w" )
+		fout.write( out_nullarbor )
+		fout.close()
+
+@click.command(epilog = '''Author: Anders Goncalves da Silva || Email: andersgs@gmail.com''')
+@click.version_option( version = 0.1, message = "make_prokka_safe 0.1" )
+@click.argument("dir")
+@click.option("--prefix", \
+		default = "2016", \
+		help = '''A prefix of maximum 4 characters to generate novel ids''' \
+		)
+
+def make_prokka_safe(dir, prefix):
+	'''a function to create a prokka safe nullarbor input file'''
+	
+	isolate_collection = Isolate_Collection()
+	print("")	
+	print("#"*80)
+	print( "Searching for reads in directory {}".format(dir) )
+	print("")
+		
+	for dir_name, subdir_list, file_list in os.walk( dir ):
+		for fname in file_list:
+			if re.search( "fastq.gz", fname ):
+				isolate = os.path.basename( dir_name )
+				if isolate_collection.in_collection( isolate ):
+					isolate_collection.add_read( isolate, fname )
+				else:
+					isolate_collection.add_isolate( isolate, dir_name )
+					isolate_collection.add_read( isolate, fname )
+	isolate_collection.print_collection()
+	
+	print( "" )
+	print( "#"*80 )
+	print( "Relabelling the isolates... " )				
+
+	isolate_collection.relabel_isolates( prefix = prefix )	
+	return 0
+
+if __name__=="__main__":
+	make_prokka_safe()
